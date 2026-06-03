@@ -1,6 +1,8 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useRef, useMemo, useState } from "react";
+
+const YANDEX_SMARTCAPTCHA_CLIENT_KEY = "ysc1_5FbSBNcjAkUGzcmdK7McdoqZN6lkJcclbFolyMOee3c4aef5";
 
 /**
  * Buy Way RU/KZ unified landing
@@ -484,21 +486,243 @@ function RegionSwitch({
 }
 
 function LeadForm({ palette, t }) {
+  const captchaRef = useRef(null);
+  const captchaWidgetId = useRef(null);
+
+  const [form, setForm] = useState({
+    name: "",
+    contact: "",
+    link: "",
+    message: "",
+  });
+  const [smartToken, setSmartToken] = useState("");
+  const [status, setStatus] = useState("idle");
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const renderSmartCaptcha = () => {
+      if (!window.smartCaptcha || !captchaRef.current) return;
+      if (captchaWidgetId.current !== null) return;
+
+      captchaWidgetId.current = window.smartCaptcha.render(captchaRef.current, {
+        sitekey: YANDEX_SMARTCAPTCHA_CLIENT_KEY,
+        hl: "ru",
+        callback: (token) => {
+          setSmartToken(token || "");
+          setStatus((current) => (current === "error" ? "idle" : current));
+          setNotice((current) =>
+            current === "Подтвердите, что вы не робот." ? "" : current
+          );
+        },
+      });
+
+      try {
+        window.smartCaptcha.subscribe(
+          captchaWidgetId.current,
+          "token-expired",
+          () => {
+            setSmartToken("");
+          }
+        );
+
+        window.smartCaptcha.subscribe(
+          captchaWidgetId.current,
+          "network-error",
+          () => {
+            setSmartToken("");
+            setStatus("error");
+            setNotice("Проверка безопасности временно недоступна. Обновите страницу и попробуйте снова.");
+          }
+        );
+
+        window.smartCaptcha.subscribe(
+          captchaWidgetId.current,
+          "javascript-error",
+          () => {
+            setSmartToken("");
+            setStatus("error");
+            setNotice("Проверка безопасности не загрузилась. Обновите страницу и попробуйте снова.");
+          }
+        );
+      } catch (error) {
+        console.warn("SmartCaptcha subscribe failed:", error);
+      }
+    };
+
+    window.onBuyWaySmartCaptchaLoaded = renderSmartCaptcha;
+
+    if (window.smartCaptcha) {
+      renderSmartCaptcha();
+    } else if (!document.getElementById("buyway-smartcaptcha-script")) {
+      const script = document.createElement("script");
+      script.id = "buyway-smartcaptcha-script";
+      script.src =
+        "https://smartcaptcha.cloud.yandex.ru/captcha.js?render=onload&onload=onBuyWaySmartCaptchaLoaded";
+      script.async = true;
+      script.defer = true;
+      document.body.appendChild(script);
+    }
+
+    return () => {
+      if (
+        window.smartCaptcha &&
+        captchaWidgetId.current !== null
+      ) {
+        try {
+          window.smartCaptcha.destroy(captchaWidgetId.current);
+        } catch (error) {
+          console.warn("SmartCaptcha destroy failed:", error);
+        }
+      }
+
+      captchaWidgetId.current = null;
+
+      if (window.onBuyWaySmartCaptchaLoaded === renderSmartCaptcha) {
+        delete window.onBuyWaySmartCaptchaLoaded;
+      }
+    };
+  }, []);
+
+  const resetSmartCaptcha = () => {
+    setSmartToken("");
+
+    if (
+      typeof window !== "undefined" &&
+      window.smartCaptcha &&
+      captchaWidgetId.current !== null
+    ) {
+      try {
+        window.smartCaptcha.reset(captchaWidgetId.current);
+      } catch (error) {
+        console.warn("SmartCaptcha reset failed:", error);
+      }
+    }
+  };
+
+  const updateField = (field, value) => {
+    setForm((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+
+    if (!form.name.trim() || !form.contact.trim()) {
+      setStatus("error");
+      setNotice("Укажите имя и контакт для связи.");
+      return;
+    }
+
+    if (!smartToken) {
+      setStatus("error");
+      setNotice("Подтвердите, что вы не робот.");
+      return;
+    }
+
+    setStatus("loading");
+    setNotice("");
+
+    try {
+      const response = await fetch("/send.php", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ...form,
+          region: t.heroTitle?.includes("Казахстан") ? "Казахстан" : "Россия",
+          smartToken,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || "Ошибка отправки");
+      }
+
+      setStatus("success");
+
+      if (typeof window !== "undefined" && window.ym) {
+        window.ym(109561047, "reachGoal", "lead_sent");
+      }
+
+      setNotice("Заявка отправлена. Мы скоро свяжемся с вами.");
+      setForm({
+        name: "",
+        contact: "",
+        link: "",
+        message: "",
+      });
+      resetSmartCaptcha();
+    } catch (error) {
+      console.error("Lead form error:", error);
+      setStatus("error");
+      setNotice("Не удалось отправить заявку. Попробуйте ещё раз или напишите в Telegram.");
+      resetSmartCaptcha();
+    }
+  };
+
   return (
-    <form id="lead" className="grid gap-3">
+    <form id="lead" className="grid gap-3" onSubmit={handleSubmit}>
       <div className="grid sm:grid-cols-2 gap-3">
-        <input className="rounded-xl border border-gray-300 px-3 py-2" placeholder={t.formName} />
-        <input className="rounded-xl border border-gray-300 px-3 py-2" placeholder={t.formPhone} />
+        <input
+          className="rounded-xl border border-gray-300 px-3 py-2"
+          placeholder={t.formName}
+          value={form.name}
+          onChange={(event) => updateField("name", event.target.value)}
+          autoComplete="name"
+        />
+        <input
+          className="rounded-xl border border-gray-300 px-3 py-2"
+          placeholder={t.formPhone}
+          value={form.contact}
+          onChange={(event) => updateField("contact", event.target.value)}
+          autoComplete="tel"
+        />
       </div>
-      <input className="rounded-xl border border-gray-300 px-3 py-2" placeholder={t.formLink} />
-      <textarea className="rounded-xl border border-gray-300 px-3 py-2" placeholder={t.formDesc} rows={3} />
+      <input
+        className="rounded-xl border border-gray-300 px-3 py-2"
+        placeholder={t.formLink}
+        value={form.link}
+        onChange={(event) => updateField("link", event.target.value)}
+      />
+      <textarea
+        className="rounded-xl border border-gray-300 px-3 py-2"
+        placeholder={t.formDesc}
+        rows={3}
+        value={form.message}
+        onChange={(event) => updateField("message", event.target.value)}
+      />
+
+      <div className="min-h-[100px]">
+        <div ref={captchaRef} />
+      </div>
+
       <button
-        type="button"
-        className="rounded-xl px-5 py-3 text-sm font-semibold text-white"
+        type="submit"
+        disabled={status === "loading"}
+        className="rounded-xl px-5 py-3 text-sm font-semibold text-white disabled:opacity-70 disabled:cursor-not-allowed"
         style={{ backgroundColor: palette.primary }}
       >
-        {t.formSubmit}
+        {status === "loading" ? "Отправляем..." : t.formSubmit}
       </button>
+
+      {notice && (
+        <div
+          className={`rounded-xl px-3 py-2 text-sm ${
+            status === "success"
+              ? "bg-green-50 text-green-700 border border-green-200"
+              : "bg-red-50 text-red-700 border border-red-200"
+          }`}
+        >
+          {notice}
+        </div>
+      )}
     </form>
   );
 }

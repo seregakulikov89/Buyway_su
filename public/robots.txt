@@ -1,0 +1,25 @@
+# robots.txt для сайта Buy Way (https://buyway.su)
+# Назначение: разрешить индексацию основного контента и указать поисковикам карту сайта
+
+User-agent: *
+Allow: /
+
+# Основное зеркало сайта
+Host: buyway.su
+
+# Карта сайта (Sitemap)
+Sitemap: https://buyway.su/sitemap.xml
+
+# Запрет на индексацию служебных директорий React
+Disallow: /static/
+Disallow: /_next/
+Disallow: /assets/
+Disallow: /manifest.json
+Disallow: /service-worker.js
+Disallow: /favicon.ico
+
+# Разрешаем всё остальное
+Allow: /
+
+# Дополнительные рекомендации для поисковиков
+Clean-param: utm_source&utm_medium&utm_campaign&utm_term&utm_content
